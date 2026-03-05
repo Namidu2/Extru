@@ -20,7 +20,10 @@ class Piece:
     def draw(self, screen, offset_x=0, is_selected=False):
         opp_color = "black" if self.color == "white" else "white"
         
-        center = ((self.pos.x * SIZE) - SIZE // 2 + offset_x, (self.pos.y * SIZE) - SIZE // 2)
+        center = (
+            round((self.pos.x * SIZE) - SIZE / 2 + offset_x),
+            round((self.pos.y * SIZE) - SIZE / 2)
+        )
 
         pygame.draw.circle(
             screen,

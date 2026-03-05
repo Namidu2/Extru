@@ -4,7 +4,7 @@ a = Analysis(
     ['main_launcher.pyw'],
     pathex=[],
     binaries=[],
-    datas=[],
+    datas=[('assets', 'assets')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},

@@ -15,5 +15,9 @@ def draw_grid(screen, offset_x=0):
             if index % 2 == 0:
                 color = (186, 202, 68)
 
-            pygame.draw.rect(screen, color, (offset_x + i * SIZE, j * SIZE, SIZE, SIZE))
+            x = round(offset_x + i * SIZE)
+            y = round(j * SIZE)
+            w = round(offset_x + (i + 1) * SIZE) - x
+            h = round((j + 1) * SIZE) - y
+            pygame.draw.rect(screen, color, (x, y, w, h))
         index += 1
