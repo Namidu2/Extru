@@ -153,53 +153,35 @@ class Team:
         valid_moves = []
 
         for piece in self.pieces:
-            if piece.is_king:
-                dirs = []
-                if self.color == "white":
-                    f_left = self.check_occupied_by_opponent(
-                        Vector2(piece.pos.x - 1, piece.pos.y - 1), opponents_pieces
-                    )
-                    f_right = self.check_occupied_by_opponent(
-                        Vector2(piece.pos.x + 1, piece.pos.y - 1), opponents_pieces
-                    )
-                    b_left = self.check_occupied_by_opponent(
-                        Vector2(piece.pos.x - 1, piece.pos.y + 1), opponents_pieces
-                    )
-                    b_right = self.check_occupied_by_opponent(
-                        Vector2(piece.pos.x + 1, piece.pos.y + 1), opponents_pieces
-                    )
-                else:
-                    f_left = self.check_occupied_by_opponent(
-                        Vector2(piece.pos.x - 1, piece.pos.y + 1), opponents_pieces
-                    )
-                    f_right = self.check_occupied_by_opponent(
-                        Vector2(piece.pos.x + 1, piece.pos.y + 1), opponents_pieces
-                    )
-                    b_left = self.check_occupied_by_opponent(
-                        Vector2(piece.pos.x - 1, piece.pos.y - 1), opponents_pieces
-                    )
-                    b_right = self.check_occupied_by_opponent(
-                        Vector2(piece.pos.x + 1, piece.pos.y - 1), opponents_pieces
-                    )
+            # In Sri Lankan rules, all pieces can capture forward and backward
+            if self.color == "white":
+                # Forward for white is y-1, Backward is y+1
+                f_left = self.check_occupied_by_opponent(
+                    Vector2(piece.pos.x - 1, piece.pos.y - 1), opponents_pieces
+                )
+                f_right = self.check_occupied_by_opponent(
+                    Vector2(piece.pos.x + 1, piece.pos.y - 1), opponents_pieces
+                )
+                b_left = self.check_occupied_by_opponent(
+                    Vector2(piece.pos.x - 1, piece.pos.y + 1), opponents_pieces
+                )
+                b_right = self.check_occupied_by_opponent(
+                    Vector2(piece.pos.x + 1, piece.pos.y + 1), opponents_pieces
+                )
             else:
-                if self.color == "white":
-                    f_left = self.check_occupied_by_opponent(
-                        Vector2(piece.pos.x - 1, piece.pos.y - 1), opponents_pieces
-                    )
-                    f_right = self.check_occupied_by_opponent(
-                        Vector2(piece.pos.x + 1, piece.pos.y - 1), opponents_pieces
-                    )
-                    b_left = False
-                    b_right = False
-                else:
-                    f_left = self.check_occupied_by_opponent(
-                        Vector2(piece.pos.x - 1, piece.pos.y + 1), opponents_pieces
-                    )
-                    f_right = self.check_occupied_by_opponent(
-                        Vector2(piece.pos.x + 1, piece.pos.y + 1), opponents_pieces
-                    )
-                    b_left = False
-                    b_right = False
+                # Forward for black is y+1, Backward is y-1
+                f_left = self.check_occupied_by_opponent(
+                    Vector2(piece.pos.x - 1, piece.pos.y + 1), opponents_pieces
+                )
+                f_right = self.check_occupied_by_opponent(
+                    Vector2(piece.pos.x + 1, piece.pos.y + 1), opponents_pieces
+                )
+                b_left = self.check_occupied_by_opponent(
+                    Vector2(piece.pos.x - 1, piece.pos.y - 1), opponents_pieces
+                )
+                b_right = self.check_occupied_by_opponent(
+                    Vector2(piece.pos.x + 1, piece.pos.y - 1), opponents_pieces
+                )
 
             dirs = [f_left, f_right, b_left, b_right]
 
