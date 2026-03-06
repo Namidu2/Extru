@@ -15,7 +15,7 @@ import json
 import queue
 import time
 
-PORT = 55555
+PORT = 5555
 BUFFER = 4096
 TIMEOUT = 120   # seconds before connection is considered dead
 

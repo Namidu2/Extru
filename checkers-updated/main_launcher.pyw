@@ -1,10 +1,11 @@
 import sys
 import os
 
-# Suppress stdout/stderr to prevent console from showing
-devnull = open(os.devnull, 'w')
-sys.stdout = devnull
-sys.stderr = devnull
+# Redirect stdout/stderr to logs.txt for debugging
+log_file = open("logs.txt", "w", buffering=1)  # line-buffered
+sys.stdout = log_file
+sys.stderr = log_file
+print("--- Checkers Session Started ---")
 
 # Change to the script directory
 os.chdir(os.path.dirname(os.path.abspath(__file__)))

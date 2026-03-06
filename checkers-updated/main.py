@@ -9,6 +9,31 @@ from board import Board
 from constants import FPS, SCREEN_SIZE, SCOREBOARD_WIDTH
 from network import Network
 
+# ─── Logging Setup ───────────────────────────────────────────────────────────
+# If running without a console, prints won't show up anywhere. 
+# We'll make sure they go to logs.txt.
+import sys
+try:
+    # Open logs.txt in append mode so we don't lose previous launcher init
+    _log_file = open("logs.txt", "a", buffering=1)
+    # Wrap sys.stdout to flush on every write
+    class Flusher:
+        def __init__(self, stream): self.stream = stream
+        def write(self, data):
+            self.stream.write(data)
+            self.stream.flush()
+        def __getattr__(self, name): return getattr(self.stream, name)
+    
+    sys.stdout = Flusher(_log_file)
+    sys.stderr = Flusher(_log_file)
+except Exception:
+    pass
+print("\n--- New Checkers Session ---")
+try:
+    print(f"Detected Local IP: {Network._get_local_ip()}")
+except Exception:
+    pass
+
 # ─── Init ────────────────────────────────────────────────────────────────────
 pygame.init()
 root = Tk()
@@ -359,6 +384,11 @@ def draw_lan_hosting(surf, panel_rect):
         dt = font_med.render(f"Waiting{dots}", True, C_SUBTEXT)
         surf.blit(dt, dt.get_rect(center=(sw//2, panel_rect.top + 180)))
 
+        tip1 = font_tiny.render("TIP: Ensure Windows Firewall allows 'python.exe' on this PC.", True, C_SUBTEXT)
+        surf.blit(tip1, tip1.get_rect(center=(sw//2, panel_rect.bottom - 45)))
+        tip2 = font_tiny.render("Both PCs must be on the same Wi-Fi/LAN network.", True, C_SUBTEXT)
+        surf.blit(tip2, tip2.get_rect(center=(sw//2, panel_rect.bottom - 22)))
+
 
 def draw_lan_joining(surf, panel_rect):
     heading = font_med.render("Join Game", True, C_ACCENT)
@@ -390,8 +420,10 @@ def draw_lan_joining(surf, panel_rect):
         lan_connect_btn.rect.center = (sw//2, panel_rect.top + 230)
         lan_connect_btn.draw(surf)
 
-    tip = font_tiny.render("Find host IP: run  ipconfig  in Command Prompt → IPv4 Address", True, C_SUBTEXT)
-    surf.blit(tip, tip.get_rect(center=(sw//2, panel_rect.bottom - 22)))
+    tip = font_tiny.render("Find host IP: run  ipconfig  in CMD → IPv4 Address", True, C_SUBTEXT)
+    surf.blit(tip, tip.get_rect(center=(sw//2, panel_rect.bottom - 45)))
+    tip2 = font_tiny.render("Example: 192.168.1.10  or  192.168.1.10:5555", True, C_SUBTEXT)
+    surf.blit(tip2, tip2.get_rect(center=(sw//2, panel_rect.bottom - 22)))
 
 
 def draw_lan_connected(surf, panel_rect):
