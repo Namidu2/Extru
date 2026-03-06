@@ -133,7 +133,7 @@ class Board:
         """Handle input for the local player in LAN mode.
         Returns (made_move, move_data) where move_data is
         (type_str, from_pos, to_pos) or None.
-        events: list of pygame events from the main loop (required for responsive input).
+        events: list of pygame events from the main loop.
         """
         win = self.check_for_win()
         if win == -1:
@@ -153,20 +153,24 @@ class Board:
         else:
             result = self._black_to_play_lan(events)
 
-        if result and result[0]:  # made_move is True
-            made_move, move_data = result
-            # Switch turn
-            if self.turn == self.white_team:
-                self.turn = self.black_team
-            else:
-                self.turn = self.white_team
-            return True, move_data
+        if result:
+            made_segment, move_data, turn_finished = result
+            if made_segment:
+                if turn_finished:
+                    # Switch turn
+                    if self.turn == self.white_team:
+                        self.turn = self.black_team
+                    else:
+                        self.turn = self.white_team
+                return True, move_data
         return False, None
 
     def _white_to_play_lan(self, events):
-        """White player's LAN turn. Returns (True, (type, from, to)) or (False, None)."""
+        """White player's LAN turn. Returns (made_segment, move_data, turn_finished)."""
         self.white_team.check_possible_moves(self.black_team.pieces)
-        made_move = False
+        made_segment = False
+        turn_finished = False
+        move_data = None
 
         for event in events:
             if event.type != pygame.MOUSEBUTTONDOWN or event.button != 1:
@@ -175,7 +179,11 @@ class Board:
             click_pos = Vector2(((raw[0] - SCOREBOARD_WIDTH) // SIZE) + 1, (raw[1] // SIZE) + 1)
 
             if self.selected_piece is None:
-                self.selected_piece = click_pos
+                # Only select if it's one of our own pieces
+                for piece in self.white_team.pieces:
+                    if piece.pos == click_pos:
+                        self.selected_piece = click_pos
+                        break
             elif (self.selected_piece is not None
                   and click_pos != self.selected_piece
                   and self.selected_location is None):
@@ -188,7 +196,6 @@ class Board:
                         self.selected_piece = piece
                         found_piece = True
                         break
-                move_data = None
                 if found_piece:
                     if can_capture:
                         for captures in self.white_team.capture_moves:
@@ -198,45 +205,42 @@ class Board:
                                 self.black_team.pieces = self.white_team.make_capture_move(captures, self.black_team.pieces)
                                 self._play_sound('capture')
                                 self.white_team.check_possible_moves(self.black_team.pieces)
+                                
+                                made_segment = True
+                                move_data = ('capture', from_pos, to_pos)
+                                
                                 if len(self.white_team.capture_moves) < 1:
-                                    made_move = True
-                                    move_data = ('capture', from_pos, to_pos)
+                                    turn_finished = True
                                 else:
                                     cap_streak = any(c[0] == self.selected_piece for c in self.white_team.capture_moves)
                                     if not cap_streak:
-                                        made_move = True
-                                        move_data = ('capture', from_pos, to_pos)
-                                    else:
-                                        # Do not set made_move to True; allow the player to continue capturing with the SAME piece.
-                                        # We need to send the partial move over the network though so the opponent sees it.
-                                        # But the framework currently only sends ONE move per turn transition.
-                                        # Let's see if we can just wait for the turn to actually end.
-                                        # Actually to keep it simple, we don't return True until the streak ends.
-                                        pass
+                                        turn_finished = True
                                 break
                     else:
                         from_pos = self.selected_piece.pos
                         to_pos   = self.selected_location
-                        made_move = self.white_team.make_move([self.selected_piece, self.selected_location])
-                        if made_move:
+                        if self.white_team.make_move([self.selected_piece, self.selected_location]):
                             self._play_sound('move')
+                            made_segment = True
                             move_data = ('move', from_pos, to_pos)
+                            turn_finished = True
 
-                if not made_move and "cap_streak" in locals() and cap_streak:
-                    # If we are in the middle of a capture streak, we do NOT clear selected_piece!
+                if not turn_finished and "cap_streak" in locals() and cap_streak:
                     self.selected_location = None
                 else:
                     self.selected_piece = None
                     self.selected_location = None
                     
-                if made_move:
-                    return True, move_data
-        return False, None
+                if made_segment:
+                    return (True, move_data, turn_finished)
+        return None
 
     def _black_to_play_lan(self, events):
-        """Black player's LAN turn. Returns (True, (type, from, to)) or (False, None)."""
+        """Black player's LAN turn. Returns (made_segment, move_data, turn_finished)."""
         self.black_team.check_possible_moves(self.white_team.pieces)
-        made_move = False
+        made_segment = False
+        turn_finished = False
+        move_data = None
 
         for event in events:
             if event.type != pygame.MOUSEBUTTONDOWN or event.button != 1:
@@ -245,7 +249,11 @@ class Board:
             click_pos = Vector2(((raw[0] - SCOREBOARD_WIDTH) // SIZE) + 1, (raw[1] // SIZE) + 1)
 
             if self.selected_piece is None:
-                self.selected_piece = click_pos
+                # Only select if it's one of our own pieces
+                for piece in self.black_team.pieces:
+                    if piece.pos == click_pos:
+                        self.selected_piece = click_pos
+                        break
             elif (self.selected_piece is not None
                   and click_pos != self.selected_piece
                   and self.selected_location is None):
@@ -258,7 +266,6 @@ class Board:
                         self.selected_piece = piece
                         found_piece = True
                         break
-                move_data = None
                 if found_piece:
                     if can_capture:
                         for captures in self.black_team.capture_moves:
@@ -268,35 +275,35 @@ class Board:
                                 self.white_team.pieces = self.black_team.make_capture_move(captures, self.white_team.pieces)
                                 self._play_sound('capture')
                                 self.black_team.check_possible_moves(self.white_team.pieces)
+                                
+                                made_segment = True
+                                move_data = ('capture', from_pos, to_pos)
+                                
                                 if len(self.black_team.capture_moves) < 1:
-                                    made_move = True
-                                    move_data = ('capture', from_pos, to_pos)
+                                    turn_finished = True
                                 else:
                                     cap_streak = any(c[0] == self.selected_piece for c in self.black_team.capture_moves)
                                     if not cap_streak:
-                                        made_move = True
-                                        move_data = ('capture', from_pos, to_pos)
-                                    else:
-                                        pass
+                                        turn_finished = True
                                 break
                     else:
                         from_pos = self.selected_piece.pos
                         to_pos   = self.selected_location
-                        made_move = self.black_team.make_move([self.selected_piece, self.selected_location])
-                        if made_move:
+                        if self.black_team.make_move([self.selected_piece, self.selected_location]):
                             self._play_sound('move')
+                            made_segment = True
                             move_data = ('move', from_pos, to_pos)
+                            turn_finished = True
 
-                if not made_move and "cap_streak" in locals() and cap_streak:
-                    # If we are in the middle of a capture streak, we do NOT clear selected_piece!
+                if not turn_finished and "cap_streak" in locals() and cap_streak:
                     self.selected_location = None
                 else:
                     self.selected_piece = None
                     self.selected_location = None
                     
-                if made_move:
-                    return True, move_data
-        return False, None
+                if made_segment:
+                    return (True, move_data, turn_finished)
+        return None
 
     def draw(self, screen):
         draw_grid(screen, SCOREBOARD_WIDTH)

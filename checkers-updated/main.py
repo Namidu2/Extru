@@ -81,6 +81,9 @@ lan_ready     = False         # both sides connected & handshake done
 # sub-screen within "LAN lobby"
 # None → pick Host/Join, "hosting" → waiting, "joining" → type IP, "connected" → ready
 lan_screen    = None
+lan_pending_moves = []        # queue of (msg, timestamp) to apply with delay
+lan_move_timer    = 0         # internal timer
+LAN_MOVE_DELAY    = 800       # ms per move segment
 
 # ─── Colours ──────────────────────────────────────────────────────────────────
 C_BG         = (10,  15,  30)
@@ -455,19 +458,28 @@ def apply_network_move(brd, msg):
 
     acting_team.check_possible_moves(other_team.pieces)
 
+    segment_applied = False
     if msg["type"] == "capture":
         for cap in acting_team.capture_moves:
             if cap[0].pos == from_v and cap[1] == to_v:
                 other_team.pieces = acting_team.make_capture_move(cap, other_team.pieces)
                 brd._play_sound('capture')
+                segment_applied = True
                 break
     else:  # move
         for piece in acting_team.pieces:
             if piece.pos == from_v:
                 acting_team.make_move([piece, to_v])
                 brd._play_sound('move')
-                brd._play_sound('move')
+                segment_applied = True
                 break
+    
+    # Switch turn ONLY if the "finished" flag is True
+    if segment_applied and msg.get("finished", True):
+        if brd.turn == brd.white_team:
+            brd.turn = brd.black_team
+        else:
+            brd.turn = brd.white_team
 
 
 def apply_network_moves_from_queue():
@@ -483,11 +495,20 @@ def apply_network_moves_from_queue():
             board.winner = "WHITE" if lan_my_color == "black" else "BLACK"
             break
         elif msg["type"] in ("move", "capture"):
-            apply_network_move(board, msg)
-            if board.turn == board.white_team:
-                board.turn = board.black_team
-            else:
-                board.turn = board.white_team
+            lan_pending_moves.append(msg)
+
+
+def process_lan_pending_moves(dt):
+    global lan_move_timer
+    if not lan_pending_moves or not board:
+        lan_move_timer = 0
+        return
+
+    lan_move_timer += dt
+    if lan_move_timer >= LAN_MOVE_DELAY:
+        msg = lan_pending_moves.pop(0)
+        apply_network_move(board, msg)
+        lan_move_timer = 0
 
 
 # ─── Main game loop ───────────────────────────────────────────────────────────
@@ -660,8 +681,9 @@ while _app_running:
                     if messagebox.askyesno("Exit", "Quit the game?"):
                         _app_running = False
 
-    # ── Check for incoming LAN messages (drain full queue each frame) ──────────
+    # ── Check for incoming LAN messages ──────────────────────────────────────────
     apply_network_moves_from_queue()
+    process_lan_pending_moves(dt)
 
     # ── Draw ──────────────────────────────────────────────────────────────────
     if not _app_running:
@@ -706,23 +728,45 @@ while _app_running:
                         (lan_my_color == "white" and board.turn == board.white_team) or
                         (lan_my_color == "black" and board.turn == board.black_team)
                     )
+                    
+                    # Status Box at bottom
+                    status_rect = pygame.Rect(sw // 2 - 150, sh - 60, 300, 45)
+                    draw_panel(game_surface, status_rect, color=(30, 40, 70), alpha=180, radius=12)
+                    
                     if my_turn:
-                        made_move, move_data = board.play_lan(lan_my_color, events)
-                        if made_move and move_data:
-                            mtype, frm, to = move_data
-                            if mtype == "capture":
-                                net.send_capture(frm, to)
-                            else:
-                                net.send_move(frm, to)
+                        # Glow effect for your turn
+                        glow_alpha = int(100 + 50 * abs(pygame.time.get_ticks() % 1000 - 500) / 500)
+                        pygame.draw.rect(game_surface, (*C_ACCENT2, glow_alpha), status_rect, 2, border_radius=12)
+                        
+                        st = font_med.render("YOUR TURN", True, C_GREEN)
+                        game_surface.blit(st, st.get_rect(center=status_rect.center))
+                        
+                        # Only allow moves if no pending opponent moves are being animated
+                        if not lan_pending_moves:
+                            made_move, move_data = board.play_lan(lan_my_color, events)
+                            if made_move and move_data:
+                                mtype, frm, to = move_data
+                                # board.play_lan already updated self.turn if the turn is finished.
+                                # Check if turn is still us.
+                                turn_finished = (
+                                    (lan_my_color == "white" and board.turn == board.black_team) or
+                                    (lan_my_color == "black" and board.turn == board.white_team)
+                                )
+                                if mtype == "capture":
+                                    net.send_capture(frm, to, finished=turn_finished)
+                                else:
+                                    net.send_move(frm, to, finished=turn_finished)
                     else:
-                        # Show "waiting for opponent"
-                        wt = font_small.render("Waiting for opponent…", True, C_SUBTEXT)
-                        game_surface.blit(wt, wt.get_rect(center=(sw//2, sh - 20)))
+                        if lan_pending_moves:
+                            st = font_med.render("Opponent is moving…", True, C_GOLD)
+                        else:
+                            st = font_med.render("Waiting for opponent…", True, C_SUBTEXT)
+                        game_surface.blit(st, st.get_rect(center=status_rect.center))
 
                 elif selected_ai_mode == "lan" and (not net or not net.connected):
                     # Lost connection mid-game
-                    et = font_small.render("Connection lost!", True, C_RED)
-                    game_surface.blit(et, et.get_rect(center=(sw//2, sh - 20)))
+                    et = font_med.render("CONNECTION LOST!", True, C_RED)
+                    game_surface.blit(et, et.get_rect(center=(sw//2, sh - 40)))
                 else:
                     # Local game (AI or human)
                     board.play()

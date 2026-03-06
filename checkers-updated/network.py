@@ -111,15 +111,17 @@ class Network:
     # Public – send / receive
     # ------------------------------------------------------------------
 
-    def send_move(self, from_pos, to_pos):
+    def send_move(self, from_pos, to_pos, finished=True):
         self._send_raw({"type": "move",
                          "from": [int(from_pos.x), int(from_pos.y)],
-                         "to":   [int(to_pos.x),   int(to_pos.y)]})
+                         "to":   [int(to_pos.x),   int(to_pos.y)],
+                         "finished": finished})
 
-    def send_capture(self, from_pos, to_pos):
+    def send_capture(self, from_pos, to_pos, finished=True):
         self._send_raw({"type": "capture",
                          "from": [int(from_pos.x), int(from_pos.y)],
-                         "to":   [int(to_pos.x),   int(to_pos.y)]})
+                         "to":   [int(to_pos.x),   int(to_pos.y)],
+                         "finished": finished})
 
     def poll(self):
         """Return next message dict from peer, or None if queue is empty."""
