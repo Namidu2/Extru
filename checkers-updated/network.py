@@ -62,6 +62,7 @@ class Network:
             self._start_recv_thread()
 
             # Handshake
+            print(f"[NET] Host: Client connected from {addr[0]}")
             self._send_raw({"type": "ready"})
             return True, addr[0]
 
@@ -82,6 +83,7 @@ class Network:
             self.sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)  # disable Nagle
             self.sock.settimeout(10)
             self.sock.connect((host_ip, PORT))
+            print(f"[NET] Client: Connected to {host_ip}")
             self.sock.settimeout(None)
             self.connected = True
             self.role = "client"
@@ -110,15 +112,17 @@ class Network:
     # Public – send / receive
     # ------------------------------------------------------------------
 
-    def send_move(self, from_pos, to_pos):
+    def send_move(self, from_pos, to_pos, is_final=True):
         self._send_raw({"type": "move",
                          "from": [int(from_pos.x), int(from_pos.y)],
-                         "to":   [int(to_pos.x),   int(to_pos.y)]})
+                         "to":   [int(to_pos.x),   int(to_pos.y)],
+                         "is_final": is_final})
 
-    def send_capture(self, from_pos, to_pos):
+    def send_capture(self, from_pos, to_pos, is_final=True):
         self._send_raw({"type": "capture",
                          "from": [int(from_pos.x), int(from_pos.y)],
-                         "to":   [int(to_pos.x),   int(to_pos.y)]})
+                         "to":   [int(to_pos.x),   int(to_pos.y)],
+                         "is_final": is_final})
 
     def poll(self):
         """Return next message dict from peer, or None if queue is empty."""
@@ -135,19 +139,27 @@ class Network:
         if not self.connected or not self.sock:
             return
         try:
-            # Framing: newline-delimited JSON
-            data = json.dumps(obj).encode("utf-8") + b"\n"
-            self.sock.sendall(data)
-            print(f"Sent network message: {obj}")
+            data = json.dumps(obj) + "\n"
+            self.sock.sendall(data.encode("utf-8"))
+            print(f"[NET] Sent: {obj}")
         except Exception as e:
-            print(f"Socket send error: {e}")
+            print(f"[NET] Send error: {e}")
             self.connected = False
+
+    def send_ping(self):
+        """Send a keep-alive message."""
+        self._send_raw({"type": "ping"})
 
     def _start_recv_thread(self):
         self._recv_thread = threading.Thread(target=self._recv_loop, daemon=True)
         self._recv_thread.start()
 
     def _recv_loop(self):
+        """Receive loop with timeout to avoid permanent hangs."""
+        if not self.sock:
+            self.connected = False
+            return
+        self.sock.settimeout(10.0)  # 10s timeout for recv
         while self.connected:
             try:
                 chunk = self.sock.recv(BUFFER)
@@ -160,13 +172,18 @@ class Network:
                     if line:
                         try:
                             msg = json.loads(line)
-                            print(f"Received network message: {msg}")
+                            print(f"[NET] Received: {msg}")
+                            if msg.get("type") == "ping":
+                                continue  # silent keep-alive
                             self.in_queue.put(msg)
                         except json.JSONDecodeError as e:
-                            print(f"JSON Parsing Error on line: '{line}'. Error: {e}")
+                            print(f"[NET] JSON error on '{line}': {e}")
+            except socket.timeout:
+                continue  # check connected and try again
             except Exception as e:
-                print(f"Socket read error or closed: {e}")
+                print(f"[NET] Recv loop error: {e}")
                 break
+        print("[NET] Connection closed.")
         self.connected = False
         self.in_queue.put({"type": "quit"})   # notify game loop
 
