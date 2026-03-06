@@ -14,7 +14,49 @@ pygame.init()
 root = Tk()
 root.withdraw()
 
-screen = pygame.display.set_mode(SCREEN_SIZE)
+screen = pygame.display.set_mode(SCREEN_SIZE, pygame.RESIZABLE)
+game_surface = pygame.Surface(SCREEN_SIZE)
+
+# --- Scaling logic ---
+def get_scaled_rect(win_w, win_h, log_w, log_h):
+    win_r = win_w / win_h
+    log_r = log_w / log_h
+    if win_r > log_r:
+        new_h = win_h
+        new_w = int(log_w * (win_h / log_h))
+        x = (win_w - new_w) // 2
+        y = 0
+    else:
+        new_w = win_w
+        new_h = int(log_h * (win_w / log_w))
+        x = 0
+        y = (win_h - new_h) // 2
+    return pygame.Rect(x, y, new_w, new_h)
+
+_orig_mouse_get_pos = pygame.mouse.get_pos
+def _scaled_mouse_get_pos():
+    mx, my = _orig_mouse_get_pos()
+    win_w, win_h = screen.get_size()
+    scaled_rect = get_scaled_rect(win_w, win_h, SCREEN_SIZE[0], SCREEN_SIZE[1])
+    if scaled_rect.width > 0 and scaled_rect.height > 0:
+        lx = (mx - scaled_rect.x) * (SCREEN_SIZE[0] / scaled_rect.width)
+        ly = (my - scaled_rect.y) * (SCREEN_SIZE[1] / scaled_rect.height)
+        return (lx, ly)
+    return (mx, my)
+
+pygame.mouse.get_pos = _scaled_mouse_get_pos
+
+_orig_display_update = pygame.display.update
+def _scaled_display_update(*args, **kwargs):
+    win_w, win_h = screen.get_size()
+    scaled_rect = get_scaled_rect(win_w, win_h, SCREEN_SIZE[0], SCREEN_SIZE[1])
+    scaled_surf = pygame.transform.smoothscale(game_surface, (scaled_rect.width, scaled_rect.height))
+    screen.fill((0, 0, 0))
+    screen.blit(scaled_surf, (scaled_rect.x, scaled_rect.y))
+    _orig_display_update(*args, **kwargs)
+
+pygame.display.update = _scaled_display_update
+
 clock  = pygame.time.Clock()
 pygame.display.set_caption("Checkers")
 
@@ -423,7 +465,28 @@ def apply_network_move(brd, msg):
             if piece.pos == from_v:
                 acting_team.make_move([piece, to_v])
                 brd._play_sound('move')
+                brd._play_sound('move')
                 break
+
+
+def apply_network_moves_from_queue():
+    if not (net and net.connected and board and not board.game_over):
+        return
+    while True:
+        msg = net.poll()
+        if msg is None:
+            break
+        if msg["type"] == "quit":
+            messagebox.showinfo("Opponent left", "Your opponent disconnected.")
+            board.game_over = True
+            board.winner = "WHITE" if lan_my_color == "black" else "BLACK"
+            break
+        elif msg["type"] in ("move", "capture"):
+            apply_network_move(board, msg)
+            if board.turn == board.white_team:
+                board.turn = board.black_team
+            else:
+                board.turn = board.white_team
 
 
 # ─── Main game loop ───────────────────────────────────────────────────────────
@@ -433,8 +496,26 @@ selected_ai_mode    = None
 
 while _app_running:
     dt = clock.tick(FPS)
-    events = pygame.event.get()  # collect once per frame, share with board
-
+    
+    raw_events = pygame.event.get()
+    events = []
+    
+    win_w, win_h = screen.get_size()
+    scaled_rect = get_scaled_rect(win_w, win_h, SCREEN_SIZE[0], SCREEN_SIZE[1])
+    
+    for event in raw_events:
+        if event.type == pygame.VIDEORESIZE:
+            screen = pygame.display.set_mode((event.w, event.h), pygame.RESIZABLE)
+            continue
+        elif hasattr(event, 'pos') and scaled_rect.width > 0 and scaled_rect.height > 0:
+            lx = (event.pos[0] - scaled_rect.x) * (SCREEN_SIZE[0] / scaled_rect.width)
+            ly = (event.pos[1] - scaled_rect.y) * (SCREEN_SIZE[1] / scaled_rect.height)
+            d = event.dict.copy()
+            d['pos'] = (lx, ly)
+            events.append(pygame.event.Event(event.type, d))
+        else:
+            events.append(event)
+            
     for event in events:
         if event.type == pygame.QUIT:
             _app_running = False
@@ -568,23 +649,7 @@ while _app_running:
                         _app_running = False
 
     # ── Check for incoming LAN messages (drain full queue each frame) ──────────
-    if net and net.connected and board and not board.game_over:
-        while True:
-            msg = net.poll()
-            if msg is None:
-                break
-            if msg["type"] == "quit":
-                messagebox.showinfo("Opponent left", "Your opponent disconnected.")
-                board.game_over = True
-                board.winner    = "WHITE" if lan_my_color == "black" else "BLACK"
-                break
-            elif msg["type"] in ("move", "capture"):
-                apply_network_move(board, msg)
-                # Switch turn
-                if board.turn == board.white_team:
-                    board.turn = board.black_team
-                else:
-                    board.turn = board.white_team
+    apply_network_moves_from_queue()
 
     # ── Draw ──────────────────────────────────────────────────────────────────
     if not _app_running:
@@ -592,36 +657,36 @@ while _app_running:
 
     # ── Difficulty screen ──────────────────────────────────────────────────────
     if selected_difficulty is None:
-        draw_difficulty_screen(screen)
+        draw_difficulty_screen(game_surface)
 
     # ── Play-mode screen ───────────────────────────────────────────────────────
     elif selected_ai_mode is None and board is None:
-        draw_play_mode_screen(screen)
+        draw_play_mode_screen(game_surface)
 
     # ── LAN lobby ─────────────────────────────────────────────────────────────
     elif selected_ai_mode == "lan" and board is None:
-        draw_lan_lobby(screen)
+        draw_lan_lobby(game_surface)
 
     # ── Paused overlay ────────────────────────────────────────────────────────
     elif paused and board is not None:
-        board.draw(screen)
-        screen.blit(blur_surface(screen.copy(), 15), (0, 0))
+        board.draw(game_surface)
+        game_surface.blit(blur_surface(game_surface.copy(), 15), (0, 0))
 
         cx, cy = sw//2, sh//2
         pause_play_btn.rect.center    = (cx, cy - 80)
         pause_restart_btn.rect.center = (cx, cy)
         pause_exit_btn.rect.center    = (cx, cy + 80)
         for b in [pause_play_btn, pause_restart_btn, pause_exit_btn]:
-            b.draw(screen)
+            b.draw(game_surface)
 
     # ── Active game ───────────────────────────────────────────────────────────
     else:
         if board is not None:
-            draw_scoreboard(screen, board)
-            board.draw(screen)
+            draw_scoreboard(game_surface, board)
+            board.draw(game_surface)
 
             if board.game_over:
-                draw_win_message(screen, board)
+                draw_win_message(game_surface, board)
             else:
                 # --- LAN mode ---
                 if selected_ai_mode == "lan" and net and net.connected:
@@ -640,12 +705,12 @@ while _app_running:
                     else:
                         # Show "waiting for opponent"
                         wt = font_small.render("Waiting for opponent…", True, C_SUBTEXT)
-                        screen.blit(wt, wt.get_rect(center=(sw//2, sh - 20)))
+                        game_surface.blit(wt, wt.get_rect(center=(sw//2, sh - 20)))
 
                 elif selected_ai_mode == "lan" and (not net or not net.connected):
                     # Lost connection mid-game
                     et = font_small.render("Connection lost!", True, C_RED)
-                    screen.blit(et, et.get_rect(center=(sw//2, sh - 20)))
+                    game_surface.blit(et, et.get_rect(center=(sw//2, sh - 20)))
                 else:
                     # Local game (AI or human)
                     board.play()

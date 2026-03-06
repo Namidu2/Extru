@@ -135,9 +135,12 @@ class Network:
         if not self.connected or not self.sock:
             return
         try:
-            data = json.dumps(obj) + "\n"
-            self.sock.sendall(data.encode("utf-8"))
-        except Exception:
+            # Framing: newline-delimited JSON
+            data = json.dumps(obj).encode("utf-8") + b"\n"
+            self.sock.sendall(data)
+            print(f"Sent network message: {obj}")
+        except Exception as e:
+            print(f"Socket send error: {e}")
             self.connected = False
 
     def _start_recv_thread(self):
@@ -157,10 +160,12 @@ class Network:
                     if line:
                         try:
                             msg = json.loads(line)
+                            print(f"Received network message: {msg}")
                             self.in_queue.put(msg)
-                        except json.JSONDecodeError:
-                            pass
-            except Exception:
+                        except json.JSONDecodeError as e:
+                            print(f"JSON Parsing Error on line: '{line}'. Error: {e}")
+            except Exception as e:
+                print(f"Socket read error or closed: {e}")
                 break
         self.connected = False
         self.in_queue.put({"type": "quit"})   # notify game loop
