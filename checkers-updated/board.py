@@ -206,6 +206,13 @@ class Board:
                                     if not cap_streak:
                                         made_move = True
                                         move_data = ('capture', from_pos, to_pos)
+                                    else:
+                                        # Do not set made_move to True; allow the player to continue capturing with the SAME piece.
+                                        # We need to send the partial move over the network though so the opponent sees it.
+                                        # But the framework currently only sends ONE move per turn transition.
+                                        # Let's see if we can just wait for the turn to actually end.
+                                        # Actually to keep it simple, we don't return True until the streak ends.
+                                        pass
                                 break
                     else:
                         from_pos = self.selected_piece.pos
@@ -215,8 +222,13 @@ class Board:
                             self._play_sound('move')
                             move_data = ('move', from_pos, to_pos)
 
-                self.selected_piece = None
-                self.selected_location = None
+                if not made_move and "cap_streak" in locals() and cap_streak:
+                    # If we are in the middle of a capture streak, we do NOT clear selected_piece!
+                    self.selected_location = None
+                else:
+                    self.selected_piece = None
+                    self.selected_location = None
+                    
                 if made_move:
                     return True, move_data
         return False, None
@@ -264,6 +276,8 @@ class Board:
                                     if not cap_streak:
                                         made_move = True
                                         move_data = ('capture', from_pos, to_pos)
+                                    else:
+                                        pass
                                 break
                     else:
                         from_pos = self.selected_piece.pos
@@ -273,8 +287,13 @@ class Board:
                             self._play_sound('move')
                             move_data = ('move', from_pos, to_pos)
 
-                self.selected_piece = None
-                self.selected_location = None
+                if not made_move and "cap_streak" in locals() and cap_streak:
+                    # If we are in the middle of a capture streak, we do NOT clear selected_piece!
+                    self.selected_location = None
+                else:
+                    self.selected_piece = None
+                    self.selected_location = None
+                    
                 if made_move:
                     return True, move_data
         return False, None
@@ -377,11 +396,11 @@ class Board:
                     else:
                         made_move = False
 
-                else:  # If the player did not select a piece
-                    made_move = False
-
-                self.selected_piece = None
-                self.selected_location = None
+                if not made_move and "cap_streak" in locals() and cap_streak:
+                    self.selected_location = None
+                else:
+                    self.selected_piece = None
+                    self.selected_location = None
 
                 if made_move:
                     return made_move
@@ -471,24 +490,35 @@ class Board:
                 else:  # If the player did not select a piece
                     made_move = False
 
-                self.selected_piece = None
-                self.selected_location = None
+                if not made_move and "cap_streak" in locals() and cap_streak:
+                    self.selected_location = None
+                else:
+                    self.selected_piece = None
+                    self.selected_location = None
 
                 if made_move:
                     return made_move
 
     def black_to_play_ai(self):
-        if self.prune:
-            move = minimax_with_pruning(self, self.depth, -1000, 1000, False)
-        else:
-            move = minimax(self, self.depth, False)
-        self.selected_piece = move[1][0]
-        self.selected_location = move[1][1]
+        if self.selected_piece is None:
+            if self.prune:
+                move = minimax_with_pruning(self, self.depth, -1000, 1000, False)
+            else:
+                move = minimax(self, self.depth, False)
+            self.selected_piece = move[1][0]
+            self.selected_location = move[1][1]
 
-        for piece in self.black_team.pieces:
-            if piece.pos == self.selected_piece.pos:
-                self.selected_piece = piece.pos
-                break
+            for piece in self.black_team.pieces:
+                if piece.pos == self.selected_piece.pos:
+                    self.selected_piece = piece.pos
+                    break
+        else:
+            self.black_team.check_possible_moves(self.white_team.pieces)
+            for cap in self.black_team.capture_moves:
+                if cap[0] == self.selected_piece:
+                    self.selected_location = cap[1]
+                    break
+            self.selected_piece = self.selected_piece.pos
 
         made_move = False
         ended_capture_streek = False
@@ -548,8 +578,11 @@ class Board:
         else:  # If the player did not select a piece
             made_move = False
 
-        self.selected_piece = None
-        self.selected_location = None
+        if not made_move and "cap_streak" in locals() and cap_streak:
+            self.selected_location = None
+        else:
+            self.selected_piece = None
+            self.selected_location = None
 
         if made_move:
             return made_move

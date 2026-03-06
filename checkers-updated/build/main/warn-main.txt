@@ -18,7 +18,7 @@ missing module named grp - imported by shutil (delayed, optional), tarfile (opti
 missing module named pwd - imported by posixpath (delayed, conditional, optional), shutil (delayed, optional), tarfile (optional), pathlib (delayed, optional), subprocess (delayed, conditional, optional)
 missing module named _frozen_importlib_external - imported by importlib._bootstrap (delayed), importlib (optional), importlib.abc (optional)
 excluded module named _frozen_importlib - imported by importlib (optional), importlib.abc (optional)
-missing module named posix - imported by os (conditional, optional), shutil (conditional), importlib._bootstrap_external (conditional), posixpath (optional)
+missing module named posix - imported by os (conditional, optional), posixpath (optional), shutil (conditional), importlib._bootstrap_external (conditional)
 missing module named resource - imported by posix (top-level)
 missing module named typing_extensions - imported by pygame.math (top-level), pygame.mouse (top-level)
 missing module named pygame._common - imported by pygame.rect (top-level), pygame.rwobject (top-level), pygame.color (top-level), pygame.surface (top-level), pygame.display (top-level), pygame.draw (top-level), pygame.image (top-level), pygame.key (top-level), pygame.mask (top-level), pygame.transform (top-level), pygame.pixelcopy (top-level), pygame.pixelarray (top-level), pygame.font (top-level), pygame.mixer_music (top-level), pygame.mixer (top-level), pygame.gfxdraw (top-level)
