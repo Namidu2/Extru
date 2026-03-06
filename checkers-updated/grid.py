@@ -2,7 +2,7 @@ import pygame
 
 ROWS = 8
 COLS = 8
-SIZE = 100
+SIZE = 80
 
 
 def draw_grid(screen, offset_x=0):

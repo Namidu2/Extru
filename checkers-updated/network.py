@@ -15,7 +15,7 @@ import json
 import queue
 import time
 
-PORT = 55555
+DEFAULT_PORT = 55555
 BUFFER = 4096
 TIMEOUT = 120   # seconds before connection is considered dead
 
@@ -29,37 +29,38 @@ class Network:
         self.role = None          # "host" or "client"
         self.in_queue: queue.Queue = queue.Queue()   # messages received from peer
         self._recv_thread: threading.Thread | None = None
+        self._ping_thread: threading.Thread | None = None
         self._partial = ""        # leftover bytes between packets
 
     # ------------------------------------------------------------------
     # Public – setup
     # ------------------------------------------------------------------
 
-    def host(self, status_callback=None):
-        """Open a server socket and wait for one client to connect.
-        Returns (True, client_ip) on success, (False, error_msg) on failure.
-        Blocks until a client connects – call from a background thread.
-        """
+    def host(self, port=DEFAULT_PORT, status_callback=None):
+        """Open a server socket and wait for one client to connect."""
         try:
             server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            server.bind(("", PORT))
+            server.bind(("", port))
             server.listen(1)
             server.settimeout(TIMEOUT)
 
             local_ip = self._get_local_ip()
             if status_callback:
-                status_callback(f"Hosting on {local_ip}:{PORT}\nWaiting for opponent…")
+                status_callback(f"Hosting on {local_ip}:{port}\nWaiting for opponent…")
 
             conn, addr = server.accept()
             server.close()
 
             self.sock = conn
-            self.sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)  # disable Nagle
+            # Performance & Stability options
+            self.sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+            self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
             self.sock.settimeout(None)   # blocking recv in thread
+            
             self.connected = True
             self.role = "host"
-            self._start_recv_thread()
+            self._start_threads()
 
             # Handshake
             self._send_raw({"type": "ready"})
@@ -70,22 +71,22 @@ class Network:
         except Exception as e:
             return False, str(e)
 
-    def join(self, host_ip: str, status_callback=None):
-        """Connect to a host.
-        Returns (True, "") on success, (False, error_msg) on failure.
-        """
+    def join(self, host_ip: str, port=DEFAULT_PORT, status_callback=None):
+        """Connect to a host."""
         try:
             if status_callback:
-                status_callback(f"Connecting to {host_ip}:{PORT}…")
+                status_callback(f"Connecting to {host_ip}:{port}…")
 
             self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            self.sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)  # disable Nagle
+            self.sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+            self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
             self.sock.settimeout(10)
-            self.sock.connect((host_ip, PORT))
+            self.sock.connect((host_ip, port))
             self.sock.settimeout(None)
+            
             self.connected = True
             self.role = "client"
-            self._start_recv_thread()
+            self._start_threads()
             return True, ""
 
         except Exception as e:
@@ -138,14 +139,22 @@ class Network:
             # Framing: newline-delimited JSON
             data = json.dumps(obj).encode("utf-8") + b"\n"
             self.sock.sendall(data)
-            print(f"Sent network message: {obj}")
         except Exception as e:
             print(f"Socket send error: {e}")
             self.connected = False
 
-    def _start_recv_thread(self):
+    def _start_threads(self):
         self._recv_thread = threading.Thread(target=self._recv_loop, daemon=True)
         self._recv_thread.start()
+        self._ping_thread = threading.Thread(target=self._ping_loop, daemon=True)
+        self._ping_thread.start()
+
+    def _ping_loop(self):
+        """Send periodic pings to keep the connection alive."""
+        while self.connected:
+            time.sleep(5)
+            if self.connected:
+                self._send_raw({"type": "ping"})
 
     def _recv_loop(self):
         while self.connected:
@@ -160,7 +169,10 @@ class Network:
                     if line:
                         try:
                             msg = json.loads(line)
-                            print(f"Received network message: {msg}")
+                            # Heartbeat check
+                            if msg.get("type") == "ping":
+                                continue  # Ignore heartbeat packets
+                            
                             self.in_queue.put(msg)
                         except json.JSONDecodeError as e:
                             print(f"JSON Parsing Error on line: '{line}'. Error: {e}")

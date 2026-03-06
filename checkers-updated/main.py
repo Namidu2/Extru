@@ -388,7 +388,7 @@ def draw_lan_joining(surf, panel_rect):
         lan_connect_btn.rect.center = (sw//2, panel_rect.top + 230)
         lan_connect_btn.draw(surf)
 
-    tip = font_tiny.render("Find host IP: run  ipconfig  in Command Prompt → IPv4 Address", True, C_SUBTEXT)
+    tip = font_tiny.render("Format: IP:PORT (e.g. 192.168.1.5:55555)", True, C_SUBTEXT)
     surf.blit(tip, tip.get_rect(center=(sw//2, panel_rect.bottom - 22)))
 
 
@@ -402,7 +402,8 @@ def draw_lan_connected(surf, panel_rect):
 # ─── LAN background workers ───────────────────────────────────────────────────
 def _host_worker():
     global lan_status, lan_error, lan_screen, lan_connecting, lan_ready
-    ok, info = net.host(status_callback=lambda s: _set_status(s))
+    # For host, we just use the default port for now, but Network.host now supports it
+    ok, info = net.host(port=55555, status_callback=lambda s: _set_status(s))
     lan_connecting = False
     if ok:
         lan_screen = "connected"
@@ -411,9 +412,9 @@ def _host_worker():
         lan_error = f"Error: {info}"
 
 
-def _join_worker(ip):
+def _join_worker(ip, port=55555):
     global lan_status, lan_error, lan_screen, lan_connecting, lan_ready
-    ok, info = net.join(ip)
+    ok, info = net.join(ip, port=port)
     lan_connecting = False
     if ok:
         lan_screen = "connected"
@@ -582,7 +583,8 @@ while _app_running:
 
             elif lan_screen == "joining":
                 # Click on text box
-                box_rect = pygame.Rect(sw//2 - 160, 230, 320, 46)
+                panel_rect = pygame.Rect(sw//2 - 280, 120, 560, 340)
+                box_rect = pygame.Rect(sw//2 - 160, panel_rect.top + 110, 320, 46)
                 if event.type == pygame.MOUSEBUTTONDOWN:
                     lan_input_active = box_rect.collidepoint(event.pos)
 
@@ -591,17 +593,27 @@ while _app_running:
                         lan_input_text = lan_input_text[:-1]
                     elif event.key == pygame.K_RETURN:
                         pass  # handled by connect button
-                    elif len(lan_input_text) < 20:
-                        if event.unicode in "0123456789.":
+                    elif len(lan_input_text) < 30:
+                        if event.unicode in "0123456789.:":
                             lan_input_text += event.unicode
 
                 if lan_connect_btn.is_clicked(event) and not lan_connecting:
-                    ip = lan_input_text.strip()
-                    if ip:
+                    raw_input = lan_input_text.strip()
+                    if raw_input:
+                        ip = raw_input
+                        port = 55555 # default
+                        if ":" in raw_input:
+                            try:
+                                ip, p_str = raw_input.split(":", 1)
+                                if p_str:
+                                    port = int(p_str)
+                            except ValueError:
+                                pass # stick with default port if invalid
+                        
                         lan_connecting = True
-                        lan_status = f"Connecting to {ip}…"
+                        lan_status = f"Connecting to {ip}:{port}…"
                         lan_error  = ""
-                        threading.Thread(target=_join_worker, args=(ip,), daemon=True).start()
+                        threading.Thread(target=_join_worker, args=(ip, port), daemon=True).start()
 
             # Once connected, wait a tick then start the game
             if lan_ready:
