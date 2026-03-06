@@ -8,6 +8,7 @@ from tkinter import Tk, messagebox
 from board import Board
 from constants import FPS, SCREEN_SIZE, SCOREBOARD_WIDTH
 from network import Network
+from minimax import minimax, minimax_with_pruning
 
 # ─── Init ────────────────────────────────────────────────────────────────────
 pygame.init()
@@ -66,7 +67,10 @@ board   = None
 
 # ─── Game state variables ─────────────────────────────────────────────────────
 selected_difficulty = None
-selected_ai_mode    = None   # True=AI, False=local human, "lan"=LAN
+selected_play_mode   = None   # "ai", "human", "lan"
+pending_moves      = []        # queue of (msg, timestamp) to apply with delay
+move_timer         = 0         # internal timer
+MOVE_DELAY         = 800       # ms per move segment
 
 # ─── LAN state ────────────────────────────────────────────────────────────────
 net: Network | None = None   # active Network instance
@@ -81,9 +85,7 @@ lan_ready     = False         # both sides connected & handshake done
 # sub-screen within "LAN lobby"
 # None → pick Host/Join, "hosting" → waiting, "joining" → type IP, "connected" → ready
 lan_screen    = None
-lan_pending_moves = []        # queue of (msg, timestamp) to apply with delay
-lan_move_timer    = 0         # internal timer
-LAN_MOVE_DELAY    = 800       # ms per move segment
+lan_screen    = None
 
 # ─── Colours ──────────────────────────────────────────────────────────────────
 C_BG         = (10,  15,  30)
@@ -146,6 +148,7 @@ def draw_panel(surf, rect, color=C_PANEL, radius=16, alpha=220):
 font_huge  = pygame.font.SysFont("segoeui", 72, bold=True)
 font_large = pygame.font.SysFont("segoeui", 44, bold=True)
 font_med   = pygame.font.SysFont("segoeui", 28)
+font_status = pygame.font.SysFont("segoeui", 20, bold=True)
 font_small = pygame.font.SysFont("segoeui", 22)
 font_tiny  = pygame.font.SysFont("segoeui", 18)
 
@@ -179,12 +182,13 @@ lan_connect_btn= Button("Connect",    (0,0), (160, 52), C_GREEN, (60,230,120), 2
 # Pause-menu
 pause_play_btn    = Button("Resume",  (0,0), (200, 60), C_GREEN,       (60,230,120))
 pause_restart_btn = Button("Restart", (0,0), (200, 60), C_ACCENT,      C_ACCENT2)
+pause_menu_btn    = Button("Main Menu", (0,0), (200, 60), (120, 60, 180), (160, 90, 230))
 pause_exit_btn    = Button("Exit",    (0,0), (200, 60), C_RED,         (230, 80, 80))
 back_btn          = Button("← Back",  (0,0), (140, 48), C_RED,         (230, 80, 80), 22)
 
 
 # ─── Scoreboard ───────────────────────────────────────────────────────────────
-def draw_scoreboard(surf, brd):
+def draw_scoreboard(surf, brd, status_msg=None, status_color=C_TEXT):
     pygame.draw.rect(surf, (18,22,40), (0, 0, SCOREBOARD_WIDTH, sh))
     pygame.draw.line(surf, (50,60,90), (SCOREBOARD_WIDTH-2, 0), (SCOREBOARD_WIDTH-2, sh), 2)
 
@@ -224,6 +228,24 @@ def draw_scoreboard(surf, brd):
         yc = C_WHITE_PIECE if lan_my_color == "white" else C_SUBTEXT
         yl = font_tiny.render(you_color, True, yc)
         surf.blit(yl, (SCOREBOARD_WIDTH//2 - yl.get_width()//2, 290))
+
+    if status_msg:
+        pygame.draw.line(surf, (50,60,90), (8, 330), (SCOREBOARD_WIDTH-8, 330), 1)
+        # Multiline status wrap-ish
+        words = status_msg.split()
+        y_off = 350
+        line = ""
+        for word in words:
+            test_line = line + word + " "
+            if font_status.size(test_line)[0] < SCOREBOARD_WIDTH - 10:
+                line = test_line
+            else:
+                st_surf = font_status.render(line, True, status_color)
+                surf.blit(st_surf, (SCOREBOARD_WIDTH//2 - st_surf.get_width()//2, y_off))
+                y_off += 25
+                line = word + " "
+        st_surf = font_status.render(line, True, status_color)
+        surf.blit(st_surf, (SCOREBOARD_WIDTH//2 - st_surf.get_width()//2, y_off))
 
 
 # ─── Win overlay ──────────────────────────────────────────────────────────────
@@ -300,9 +322,6 @@ def draw_play_mode_screen(surf):
 
     for btn in [play_vs_ai_btn, play_vs_human_btn, play_vs_lan_btn]:
         btn.draw(surf)
-
-    back_btn.rect.topleft = (20, sh - 70)
-    back_btn.draw(surf)
 
 
 # ─── Screen: LAN Lobby ────────────────────────────────────────────────────────
@@ -431,6 +450,21 @@ def _set_status(s):
     global lan_status
     lan_status = s
 
+def reset_game_state():
+    global board, selected_difficulty, selected_play_mode, paused
+    global lan_role, lan_screen, lan_my_color, lan_status, lan_error, lan_input_text, lan_connecting, lan_ready, net
+    board = None
+    selected_difficulty = None
+    selected_play_mode = None
+    paused = False
+    if net:
+        net.disconnect()
+        net = None
+    lan_role = lan_screen = lan_my_color = None
+    lan_status = lan_error = lan_input_text = ""
+    lan_connecting = lan_ready = False
+    pending_moves.clear()
+
 
 # ─── Start game (local or LAN) ────────────────────────────────────────────────
 def start_new_game(depth=2, ai=False, lan=False):
@@ -440,21 +474,25 @@ def start_new_game(depth=2, ai=False, lan=False):
 
 
 # ─── LAN: apply a move received from the peer ─────────────────────────────────
-def apply_network_move(brd, msg):
-    """Apply a move/capture received from the remote peer."""
+def apply_move_to_board(brd, msg):
+    """Apply a move/capture to the board (used for LAN and AI)."""
     from pygame.math import Vector2
     fx, fy = msg["from"]
     tx, ty = msg["to"]
     from_v  = Vector2(fx, fy)
     to_v    = Vector2(tx, ty)
 
-    # Determine which team made the move (the opponent's team)
-    if lan_my_color == "white":
-        acting_team  = brd.black_team
-        other_team   = brd.white_team
+    if selected_play_mode == "lan":
+        if lan_my_color == "white":
+            acting_team  = brd.black_team
+            other_team   = brd.white_team
+        else:
+            acting_team  = brd.white_team
+            other_team   = brd.black_team
     else:
-        acting_team  = brd.white_team
-        other_team   = brd.black_team
+        # For AI, acting team is always black
+        acting_team = brd.black_team
+        other_team = brd.white_team
 
     acting_team.check_possible_moves(other_team.pieces)
 
@@ -474,7 +512,6 @@ def apply_network_move(brd, msg):
                 segment_applied = True
                 break
     
-    # Switch turn ONLY if the "finished" flag is True
     if segment_applied and msg.get("finished", True):
         if brd.turn == brd.white_team:
             brd.turn = brd.black_team
@@ -495,26 +532,26 @@ def apply_network_moves_from_queue():
             board.winner = "WHITE" if lan_my_color == "black" else "BLACK"
             break
         elif msg["type"] in ("move", "capture"):
-            lan_pending_moves.append(msg)
+            pending_moves.append(msg)
 
 
-def process_lan_pending_moves(dt):
-    global lan_move_timer
-    if not lan_pending_moves or not board:
-        lan_move_timer = 0
+def process_pending_moves(dt):
+    global move_timer
+    if not pending_moves or not board:
+        move_timer = 0
         return
 
-    lan_move_timer += dt
-    if lan_move_timer >= LAN_MOVE_DELAY:
-        msg = lan_pending_moves.pop(0)
-        apply_network_move(board, msg)
-        lan_move_timer = 0
+    move_timer += dt
+    if move_timer >= MOVE_DELAY:
+        msg = pending_moves.pop(0)
+        apply_move_to_board(board, msg)
+        move_timer = 0
 
 
 # ─── Main game loop ───────────────────────────────────────────────────────────
 _app_running = True
 selected_difficulty = None
-selected_ai_mode    = None
+selected_play_mode    = None
 
 while _app_running:
     dt = clock.tick(FPS)
@@ -542,35 +579,32 @@ while _app_running:
         if event.type == pygame.QUIT:
             _app_running = False
 
+        # ── Play-mode screen ───────────────────────────────────────────────
+        if selected_play_mode is None and board is None:
+            if play_vs_ai_btn.is_clicked(event):
+                selected_play_mode = "ai"
+            elif play_vs_human_btn.is_clicked(event):
+                selected_play_mode = "human"
+                selected_difficulty = 2 # default
+                start_new_game(selected_difficulty, ai=False)
+            elif play_vs_lan_btn.is_clicked(event):
+                selected_play_mode = "lan"
+
         # ── Difficulty screen ──────────────────────────────────────────────
-        if selected_difficulty is None:
+        elif selected_difficulty is None and selected_play_mode == "ai" and board is None:
+            if back_btn.is_clicked(event):
+                selected_play_mode = None
             for name, btn in diff_buttons.items():
                 if btn.is_clicked(event):
                     selected_difficulty = diff_map[name]
-
-        # ── Play-mode screen ───────────────────────────────────────────────
-        elif selected_ai_mode is None and board is None:
-            if back_btn.is_clicked(event):
-                selected_difficulty = None
-
-            if play_vs_ai_btn.is_clicked(event):
-                selected_ai_mode = "ai"
-                start_new_game(selected_difficulty, ai=True)
-
-            elif play_vs_human_btn.is_clicked(event):
-                selected_ai_mode = "human"
-                start_new_game(selected_difficulty, ai=False)
-
-            elif play_vs_lan_btn.is_clicked(event):
-                selected_ai_mode = "lan"
-                # go to LAN lobby (don't create board yet)
+                    start_new_game(selected_difficulty, ai=True)
 
         # ── LAN lobby ─────────────────────────────────────────────────────
-        elif selected_ai_mode == "lan" and board is None:
+        elif selected_play_mode == "lan" and board is None:
             if lan_back_btn.is_clicked(event):
                 # go back
                 if lan_screen is None:
-                    selected_ai_mode = None
+                    selected_play_mode = None
                     net = None
                     lan_role = None
                 else:
@@ -651,15 +685,7 @@ while _app_running:
         elif board is not None:
             if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
                 if board.game_over:
-                    board = None
-                    selected_difficulty = None
-                    selected_ai_mode    = None
-                    if net:
-                        net.disconnect()
-                        net = None
-                    lan_role = lan_screen = lan_my_color = None
-                    lan_status = lan_error = lan_input_text = ""
-                    lan_connecting = lan_ready = False
+                    reset_game_state()
                 else:
                     paused = not paused
 
@@ -668,37 +694,37 @@ while _app_running:
                     paused = False
                 elif pause_restart_btn.is_clicked(event):
                     if messagebox.askyesno("Restart", "Restart the game?"):
-                        board = None
-                        selected_difficulty = None
-                        selected_ai_mode    = None
-                        paused = False
-                        if net:
-                            net.disconnect()
-                            net = None
-                        lan_role = lan_screen = lan_my_color = None
-                        lan_status = lan_error = lan_input_text = ""
+                        curr_mode = selected_play_mode
+                        curr_diff = selected_difficulty
+                        reset_game_state()
+                        selected_play_mode = curr_mode
+                        selected_difficulty = curr_diff
+                        start_new_game(selected_difficulty, ai=(selected_play_mode=="ai"))
+                elif pause_menu_btn.is_clicked(event):
+                    if messagebox.askyesno("Main Menu", "Return to main menu?"):
+                        reset_game_state()
                 elif pause_exit_btn.is_clicked(event):
                     if messagebox.askyesno("Exit", "Quit the game?"):
                         _app_running = False
 
     # ── Check for incoming LAN messages ──────────────────────────────────────────
     apply_network_moves_from_queue()
-    process_lan_pending_moves(dt)
+    process_pending_moves(dt)
 
     # ── Draw ──────────────────────────────────────────────────────────────────
     if not _app_running:
         break
 
-    # ── Difficulty screen ──────────────────────────────────────────────────────
-    if selected_difficulty is None:
-        draw_difficulty_screen(game_surface)
-
     # ── Play-mode screen ───────────────────────────────────────────────────────
-    elif selected_ai_mode is None and board is None:
+    if selected_play_mode is None and board is None:
         draw_play_mode_screen(game_surface)
 
+    # ── Difficulty screen ──────────────────────────────────────────────────────
+    elif selected_difficulty is None and selected_play_mode == "ai" and board is None:
+        draw_difficulty_screen(game_surface)
+
     # ── LAN lobby ─────────────────────────────────────────────────────────────
-    elif selected_ai_mode == "lan" and board is None:
+    elif selected_play_mode == "lan" and board is None:
         draw_lan_lobby(game_surface)
 
     # ── Paused overlay ────────────────────────────────────────────────────────
@@ -707,48 +733,38 @@ while _app_running:
         game_surface.blit(blur_surface(game_surface.copy(), 15), (0, 0))
 
         cx, cy = sw//2, sh//2
-        pause_play_btn.rect.center    = (cx, cy - 80)
-        pause_restart_btn.rect.center = (cx, cy)
-        pause_exit_btn.rect.center    = (cx, cy + 80)
-        for b in [pause_play_btn, pause_restart_btn, pause_exit_btn]:
+        pause_play_btn.rect.center    = (cx, cy - 120)
+        pause_restart_btn.rect.center = (cx, cy - 40)
+        pause_menu_btn.rect.center    = (cx, cy + 40)
+        pause_exit_btn.rect.center    = (cx, cy + 120)
+        for b in [pause_play_btn, pause_restart_btn, pause_menu_btn, pause_exit_btn]:
             b.draw(game_surface)
 
     # ── Active game ───────────────────────────────────────────────────────────
     else:
         if board is not None:
             board.check_game_over()
-            draw_scoreboard(game_surface, board)
-            board.draw(game_surface)
+            
+            status_txt = ""
+            status_col = C_SUBTEXT
 
             if board.game_over:
+                draw_scoreboard(game_surface, board)
+                board.draw(game_surface)
                 draw_win_message(game_surface, board)
             else:
-                # --- LAN mode ---
-                if selected_ai_mode == "lan" and net and net.connected:
+                if selected_play_mode == "lan" and net and net.connected:
                     my_turn = (
                         (lan_my_color == "white" and board.turn == board.white_team) or
                         (lan_my_color == "black" and board.turn == board.black_team)
                     )
-                    
-                    # Status Box at bottom
-                    status_rect = pygame.Rect(sw // 2 - 150, sh - 60, 300, 45)
-                    draw_panel(game_surface, status_rect, color=(30, 40, 70), alpha=180, radius=12)
-                    
                     if my_turn:
-                        # Glow effect for your turn
-                        glow_alpha = int(100 + 50 * abs(pygame.time.get_ticks() % 1000 - 500) / 500)
-                        pygame.draw.rect(game_surface, (*C_ACCENT2, glow_alpha), status_rect, 2, border_radius=12)
-                        
-                        st = font_med.render("YOUR TURN", True, C_GREEN)
-                        game_surface.blit(st, st.get_rect(center=status_rect.center))
-                        
-                        # Only allow moves if no pending opponent moves are being animated
-                        if not lan_pending_moves:
+                        status_txt = "YOUR TURN"
+                        status_col = C_GREEN
+                        if not pending_moves:
                             made_move, move_data = board.play_lan(lan_my_color, events)
                             if made_move and move_data:
                                 mtype, frm, to = move_data
-                                # board.play_lan already updated self.turn if the turn is finished.
-                                # Check if turn is still us.
                                 turn_finished = (
                                     (lan_my_color == "white" and board.turn == board.black_team) or
                                     (lan_my_color == "black" and board.turn == board.white_team)
@@ -758,19 +774,53 @@ while _app_running:
                                 else:
                                     net.send_move(frm, to, finished=turn_finished)
                     else:
-                        if lan_pending_moves:
-                            st = font_med.render("Opponent is moving…", True, C_GOLD)
-                        else:
-                            st = font_med.render("Waiting for opponent…", True, C_SUBTEXT)
-                        game_surface.blit(st, st.get_rect(center=status_rect.center))
+                        status_txt = "Opponent is moving…" if pending_moves else "Waiting for opponent…"
+                        status_col = C_GOLD if pending_moves else C_SUBTEXT
 
-                elif selected_ai_mode == "lan" and (not net or not net.connected):
-                    # Lost connection mid-game
-                    et = font_med.render("CONNECTION LOST!", True, C_RED)
-                    game_surface.blit(et, et.get_rect(center=(sw//2, sh - 40)))
-                else:
-                    # Local game (AI or human)
+                elif selected_play_mode == "lan" and (not net or not net.connected):
+                    status_txt = "CONNECTION LOST!"
+                    status_col = C_RED
+
+                elif selected_play_mode == "ai":
+                    if board.turn == board.white_team:
+                        status_txt = "YOUR TURN"
+                        status_col = C_GREEN
+                        board.play()
+                    else:
+                        if pending_moves:
+                            status_txt = "AI is moving…"
+                            status_col = C_GOLD
+                        else:
+                            status_txt = "AI is thinking…"
+                            status_col = C_SUBTEXT
+                            draw_scoreboard(game_surface, board, status_txt, status_col)
+                            board.draw(game_surface)
+                            pygame.display.update()
+                            
+                            if board.prune:
+                                _, move = minimax_with_pruning(board, board.depth, -1000, 1000, False)
+                            else:
+                                _, move = minimax(board, board.depth, False)
+                            
+                            if move:
+                                mtype = "move"
+                                board.black_team.check_possible_moves(board.white_team.pieces)
+                                if any(cap[0].pos == move[0].pos and cap[1] == move[1] for cap in board.black_team.capture_moves):
+                                    mtype = "capture"
+                                pending_moves.append({
+                                    "type": mtype, "from": (move[0].pos.x, move[0].pos.y),
+                                    "to": (move[1].x, move[1].y), "finished": True
+                                })
+                            status_txt = "AI is moving…"
+                            status_col = C_GOLD
+
+                else: # vs Human local
+                    status_txt = "WHITE'S TURN" if board.turn == board.white_team else "BLACK'S TURN"
+                    status_col = C_GREEN
                     board.play()
+
+                draw_scoreboard(game_surface, board, status_txt, status_col)
+                board.draw(game_surface)
 
     pygame.display.update()
 
