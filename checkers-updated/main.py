@@ -716,6 +716,7 @@ while _app_running:
     # ── Active game ───────────────────────────────────────────────────────────
     else:
         if board is not None:
+            board.check_game_over()
             draw_scoreboard(game_surface, board)
             board.draw(game_surface)
 

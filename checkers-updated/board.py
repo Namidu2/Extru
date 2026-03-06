@@ -105,7 +105,8 @@ class Board:
         else:
             return 0
 
-    def play(self):
+    def check_game_over(self):
+        """Update game_over and winner status based on board state."""
         win = self.check_for_win()
         if win == -1:
             self.game_over = True
@@ -113,6 +114,11 @@ class Board:
         elif win == 1:
             self.game_over = True
             self.winner = "WHITE"
+        return self.game_over
+
+    def play(self):
+        if self.check_game_over():
+            return
 
         if self.turn == self.white_team:
             switch = self.white_to_play()
@@ -135,14 +141,7 @@ class Board:
         (type_str, from_pos, to_pos) or None.
         events: list of pygame events from the main loop.
         """
-        win = self.check_for_win()
-        if win == -1:
-            self.game_over = True
-            self.winner = "BLACK"
-            return False, None
-        elif win == 1:
-            self.game_over = True
-            self.winner = "WHITE"
+        if self.check_game_over():
             return False, None
 
         if events is None:
