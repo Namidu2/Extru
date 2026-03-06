@@ -76,14 +76,24 @@ class Network:
         Returns (True, "") on success, (False, error_msg) on failure.
         """
         try:
+            # Handle optional port in IP string (e.g. "192.168.1.5:55555")
+            target_port = PORT
+            target_ip = host_ip
+            if ":" in host_ip:
+                try:
+                    target_ip, p_str = host_ip.split(":", 1)
+                    target_port = int(p_str)
+                except ValueError:
+                    pass
+
             if status_callback:
-                status_callback(f"Connecting to {host_ip}:{PORT}…")
+                status_callback(f"Connecting to {target_ip}:{target_port}…")
 
             self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)  # disable Nagle
             self.sock.settimeout(10)
-            self.sock.connect((host_ip, PORT))
-            print(f"[NET] Client: Connected to {host_ip}")
+            self.sock.connect((target_ip, target_port))
+            print(f"[NET] Client: Connected to {target_ip}:{target_port}")
             self.sock.settimeout(None)
             self.connected = True
             self.role = "client"

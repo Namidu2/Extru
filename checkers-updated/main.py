@@ -595,8 +595,8 @@ while _app_running:
                         lan_input_text = lan_input_text[:-1]
                     elif event.key == pygame.K_RETURN:
                         pass  # handled by connect button
-                    elif len(lan_input_text) < 20:
-                        if event.unicode in "0123456789.":
+                    elif len(lan_input_text) < 30:
+                        if event.unicode in "0123456789.:":
                             lan_input_text += event.unicode
 
                 if lan_connect_btn.is_clicked(event) and not lan_connecting:
